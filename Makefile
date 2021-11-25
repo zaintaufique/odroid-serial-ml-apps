@@ -1,12 +1,12 @@
 # MAKEFILE
 
 CXX = g++
-CFLAGS=-c -std=c++11
+CFLAGS=-c -O3 -std=c++11
 LDFLAGS=-lm
 
-SRC=lesq.cpp
+SRC=kMeans.cpp
 OBJ=$(SRC:.cpp=.o)
-EXE=lesq
+EXE=kMeans
 
 DEPS=$(SRC:%.cpp=%.d)
 
