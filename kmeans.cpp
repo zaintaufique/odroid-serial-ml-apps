@@ -5,6 +5,9 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <chrono>
+#include <cstring>
+using namespace std::chrono;
 
 // #define CONTROLLER_ATTACHED
 
@@ -28,19 +31,25 @@ struct point{
 	char c;
 	};
 
-int precisionLevel;	
-
-struct point space[N];
-struct point means[T];
-struct point centroids[k];
-
 int rx0,ry0,gx0,gy0,bx0,by0,rcount0,gcount0,bcount0;
 int rx1,ry1,gx1,gy1,bx1,by1,rcount1,gcount1,bcount1;
 int rx2,ry2,gx2,gy2,bx2,by2,rcount2,gcount2,bcount2;
 int rx3,ry3,gx3,gy3,bx3,by3,rcount3,gcount3,bcount3;
 
-void kmeans_Parallel(void);
-void kmeansApxLevel_Parallel();
+struct point space[N];
+struct point means[T];
+struct point centroids[k];
+    
+struct point space1[N];
+struct point means1[T];
+struct point centroids1[k];
+    
+void kmeans_series(point*, point*, int);
+// void kmeansApxLevel_series(point*, point*);
+
+void kmeans_Parallel(point*, point*, int);
+// void kmeansApxLevel_Parallel(point*, point*);
+
 void* kmeans_P0(void *tid);
 void* kmeans_P1(void *tid);
 void* kmeans_P2(void *tid);
@@ -48,11 +57,6 @@ void* kmeans_P3(void *tid);
 
 void dataGen(point*, int);
 float dist(struct point p1,struct point p2);
-void kmeans_series(void);
-//void kmeansApx(point*, point*);
-void kmeansApxLevel_series(void);
-void kmeans_Parallel(void);
-void InitData(void);
 void FlushgVars (void);
 
 //full scale perf = 10.4
@@ -60,16 +64,12 @@ void FlushgVars (void);
 int main(int argc, char** argv)
 {
 	int times;
-	times = atoi(argv[1]);
+	times = 10;//atoi(argv[1]);
 	float accLoss=0;
 	std::ofstream precLog("precLog.txt", std::ios::out);
+	int precisionLevel;
+
 #ifdef CONTROLLER_ATTACHED
-    dataGen(space, N);
-	dataGen(means, T);
-	dataGen(centroids, k);
-	centroids[0].c = 'r';
-	centroids[1].c = 'g';
-	centroids[2].c = 'b';
 
 	for(int i=0; i<times; i++){
 	    FlushgVars();
@@ -92,27 +92,53 @@ int main(int argc, char** argv)
 	std::cout << "Relaxed convergence for K-Means = " << accLoss/times << std::endl;
 	std::cout << "-------------------------------- " << std::endl;
 #else
-    dataGen(space, N);
-	dataGen(means, T);
-	dataGen(centroids, k);
-	centroids[0].c = 'r';
-	centroids[1].c = 'g';
-	centroids[2].c = 'b';
 
 	for(int i=0; i<times; i++){
-		precisionLevel = 1; // use the level of approximation you need.
+		precisionLevel = i*10; // use the level of approximation you need.
 		FlushgVars();
 		dataGen(space, N);
 		dataGen(centroids, k);
 		centroids[0].c = 'r';
     	centroids[1].c = 'g';
     	centroids[2].c = 'b';
-        if(precisionLevel ==0)
-            kmeans_Parallel();
-    	else
-            kmeansApxLevel_series();
-    		accLoss+=precisionLevel;
-    		precLog << precisionLevel << std::endl;
+    	// We need same dataset for Serial and Parallel dataset
+        memcpy(space1, space, sizeof(space));
+        memcpy(centroids1, centroids, sizeof(centroids));
+        
+        // Get starting timepoint
+        start = high_resolution_clock::now();
+          
+        // Call the function, here sort()
+        kmeans_Parallel(space, centroids, precisionLevel);          
+        // Get ending timepoint
+        stop = high_resolution_clock::now();
+          
+        // Get duration. Substart timepoints to 
+        // get durarion. To cast it to proper unit
+        // use duration cast method
+        duration = duration_cast<microseconds>(stop - start);
+          
+        std::cout << duration.count() << " us" << std::endl;
+        std::cout << "P= " << precisionLevel << std::endl;
+                 
+        // Get starting timepoint
+        auto start = high_resolution_clock::now();
+          
+        // Call the function, here sort()
+        kmeans_series(space1, centroids1,precisionLevel);          
+        // Get ending timepoint
+        auto stop = high_resolution_clock::now();
+          
+        // Get duration. Substart timepoints to 
+        // get durarion. To cast it to proper unit
+        // use duration cast method
+        auto duration = duration_cast<microseconds>(stop - start);
+          
+        std::cout << duration.count() << " us" << std::endl;
+        std::cout << "P= " << precisionLevel << std::endl;
+
+    	accLoss+=precisionLevel;
+    	precLog << precisionLevel << std::endl;
       }
     	precLog.close();
 
@@ -125,87 +151,25 @@ int main(int argc, char** argv)
 return 0;
 }
 
-void InitData(void)
-{
-	dataGen(space, N);
-	dataGen(means, T);
-	dataGen(centroids, k);
-	centroids[0].c = 'r';
-	centroids[1].c = 'g';
-	centroids[2].c = 'b';
-}
-
-//accureate version
-void kmeans_series(void)
-{
-//int flips;
-		do{
-		flips = 0;
-		int rcount =0,gcount=0,bcount =0;
-		int rx,ry,gx,gy,bx,by;
-		rx = ry = bx = by = gx = gy = 0;
-
-		for(int i=0; i<N; i++){
-	 	 if(space[i].c == 'r'){
-	 		 rcount++;
-	 		 rx += space[i].x;
-	 		 ry += space[i].y;
-	 	 }
-	 	 if(space[i].c == 'g'){
-	 		 gcount++;
-	 		 gx += space[i].x;
-	 		 gy += space[i].y;
-	 	 }
-	 	 if(space[i].c == 'b'){
-	 		 bcount++;
-	 		 bx += space[i].x;
-	 		 by += space[i].y;
-	 	 }
-	  }
-	 for(int i=0; i<k; i++){
-		 if(i==0 && rcount!=0){
-			 centroids[i].x = rx/rcount;
-			 centroids[i].y = ry/rcount;
-		 }
-		 else if(i==1 && gcount!=0){
-			 centroids[i].x = gx/gcount;
-			 centroids[i].y = gy/gcount;
-		 }
-		 else if(i==2 && bcount!=0){
-			 centroids[i].x = bx/bcount;
-			 centroids[i].y = by/bcount;
-		 }
-	 }
-		char cc;
-		for(int i=0; i<N; i++){
-			float d, min=1000000;
-			for(int j=0; j<k; j++){
-	 			d = dist(space[i], centroids[j]);
-				if(d < min){
-					min = d;
-					cc = centroids[j].c;
-				}
-			}
-			if(space[i].c != cc){
-				space[i].c = cc;
-				flips++;
-			}
-		}
-	std::cout << "Flips = " << flips << std::endl;
-	}while(flips!=0);
-}
-
 //appx version with configurable level of accuracy
-void kmeansApxLevel_series()
+void kmeans_series(point* space, point* centroids, int precisionLevel)
 {
 //int flips;
-int flipVector[19] = {60,82,63,74,141,155,200,270,328, 449, 537, 691, 889, 1018, 1031, 1101, 1390, 3650 };
+int relax;
+int flipVector[20] = {51, 60, 82, 63, 74, 141, 155, 200, 270, 328, 449, 537, 691, 889, 1018, 1031, 1101, 1390, 3650, 33056};
 int index = precisionLevel/5-1;
-if(index < 0)
-	index =0;
-if(index > 19)
-	index = 19;
-int relax = flipVector[index];
+
+if (precisionLevel == 0){
+    relax = 0;
+}
+else{
+    if(index < 0)
+    	index =0;
+    if(index > 20)
+    	index = 20;
+    relax = flipVector[index];
+}
+
 //  int relax = N*l/500; //N* (l/5) / 100 --l/5 % of N to be relaxed
 		do{
 	  flips = 0;
@@ -265,80 +229,26 @@ int relax = flipVector[index];
 	std::cout << "Flips = " << flips << std::endl;
 
 }while(flips != relax);
-//}while(flips > relax);
 }
 
-void kmeans_Parallel(void)
-{
-	do{
-	flips = 0;
-	int rcount =0,gcount=0,bcount =0;
-	int rx,ry,gx,gy,bx,by;
-	rx = ry = bx = by = gx = gy = 0;
-    pthread_create(&threads[0], &attr, kmeans_P0, (void *) &threads[0]);
-    pthread_create(&threads[1], &attr, kmeans_P1, (void *) &threads[1]);
-    pthread_create(&threads[2], &attr, kmeans_P2, (void *) &threads[2]);
-    pthread_create(&threads[3], &attr, kmeans_P3, (void *) &threads[3]);
 
-    rx= rx0+rx1+rx2+rx3;
-	ry= ry0+ry1+ry2+ry3;
-	gx= gx0+gx1+gx2+gx3;
-	gy= gy0+gy1+gy2+gy3;
-	bx= bx0+bx1+bx2+bx3;
-	by= by0+by1+by2+by3;
-	rcount= rcount0+rcount1+rcount2+rcount3;
-	gcount= gcount0+gcount1+gcount2+gcount3;
-	bcount= bcount0+bcount1+bcount2+bcount3;
-// 	std::cout << "rx: " << rx << " ry: " << ry << " gx: " << gx << " gy: " << gy << "\n";
-// 	std::cout << "bx: " << bx << " by: " << by << " rcount: " << rcount << " gcount: " << gcount<< " bcount: " << bcount << "\n";
-
-	for(int i=0; i<k; i++){
-		if(i==0 && rcount!=0){
-			centroids[i].x = rx/rcount;
-			centroids[i].y = ry/rcount;
-		 }
-		else if(i==1 && gcount!=0){
-			centroids[i].x = gx/gcount;
-			centroids[i].y = gy/gcount;
-		}
-		else if(i==2 && bcount!=0){
-			centroids[i].x = bx/bcount;
-			centroids[i].y = by/bcount;
-		 }
-	 }
-
-	char cc;
-	for(int i=0; i<N; i++){
-		float d, min=1000000;
-		for(int j=0; j<k; j++){
-	 		d = dist(space[i], centroids[j]);
-			if(d < min){
-				min = d;
-				cc = centroids[j].c;
-			}
-		}
-		if(space[i].c != cc){
-			space[i].c = cc;
-			flips++;
-		}
-	}
-	std::cout << "Flips = " << flips << std::endl;
-	}while(flips!=0);
-	for (int i=0; i<NTHREADS; i++) {
-		 pthread_join(threads[i], NULL);
-    }
-}
-
-void kmeansApxLevel_Parallel()
+void kmeans_Parallel(point* space, point* centroids, int precisionLevel)
 {
 //int flips;
-int flipVector[19] = {60,82,63,74,141,155,200,270,328, 449, 537, 691, 889, 1018, 1031, 1101, 1390, 3650 };
+int relax;
+int flipVector[26] = {62, 59, 70, 71, 35, 69, 59, 27, 40, 95, 29, 79, 66, 88, 103, 112, 153, 163, 217, 333, 511, 846, 1741, 4188, 33174};
 int index = precisionLevel/5-1;
-if(index < 0)
-	index =0;
-if(index > 19)
-	index = 19;
-int relax = flipVector[index];
+
+if (precisionLevel == 0){
+    relax = 0;
+}
+else{
+    if(index < 0)
+    	index =0;
+    if(index > 26)
+    	index = 26;
+    relax = flipVector[index];
+}
 //  int relax = N*l/500; //N* (l/5) / 100 --l/5 % of N to be relaxed
 		do{
     	flips = 0;
@@ -349,6 +259,10 @@ int relax = flipVector[index];
         pthread_create(&threads[1], &attr, kmeans_P1, (void *) &threads[1]);
         pthread_create(&threads[2], &attr, kmeans_P2, (void *) &threads[2]);
         pthread_create(&threads[3], &attr, kmeans_P3, (void *) &threads[3]);
+        
+        for (int i=0; i<NTHREADS; i++) {
+		 pthread_join(threads[i], NULL);
+        }
     
         rx= rx0+rx1+rx2+rx3;
     	ry= ry0+ry1+ry2+ry3;
